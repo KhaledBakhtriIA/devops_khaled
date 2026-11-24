@@ -1,25 +1,12 @@
-# Stack CI locale : Jenkins + SonarQube + Nexus sur le même réseau Docker.
-# Démarrage :  cd ci && docker compose up -d --build
+# Outils de la CI lancés avec Docker : SonarQube + Nexus.
+# Jenkins n'est PAS ici : il est installé dans Ubuntu (WSL) sur http://localhost:8081
 #
-#   Jenkins   -> http://localhost:8088   (port 8088 pour ne pas gêner le backend Spring sur 8080)
+# Démarrage :  cd ci && docker compose up -d
+#
 #   SonarQube -> http://localhost:9000   (admin / admin au premier login)
-#   Nexus     -> http://localhost:8081   (admin / mot de passe dans le conteneur, voir README-CI.md)
-#
-# Entre conteneurs, les services se joignent par leur nom :
-#   http://jenkins:8080   http://sonarqube:9000   http://nexus:8081
+#   Nexus     -> http://localhost:8082   (port 8082 car Jenkins utilise déjà 8081)
 
 services:
-  jenkins:
-    build: ./jenkins
-    container_name: jenkins
-    ports:
-      - "8088:8080"
-      - "50000:50000"
-    volumes:
-      - jenkins_home:/var/jenkins_home
-    networks: [ci]
-    restart: unless-stopped
-
   sonarqube:
     image: sonarqube:community
     container_name: sonarqube
@@ -32,25 +19,18 @@ services:
       - sonarqube_data:/opt/sonarqube/data
       - sonarqube_extensions:/opt/sonarqube/extensions
       - sonarqube_logs:/opt/sonarqube/logs
-    networks: [ci]
     restart: unless-stopped
 
   nexus:
     image: sonatype/nexus3
     container_name: nexus
     ports:
-      - "8081:8081"
+      - "8082:8081"   # hôte 8082 -> Nexus 8081 dans le conteneur
     volumes:
       - nexus_data:/nexus-data
-    networks: [ci]
     restart: unless-stopped
 
-networks:
-  ci:
-    name: ci
-
 volumes:
-  jenkins_home:
   sonarqube_data:
   sonarqube_extensions:
   sonarqube_logs:

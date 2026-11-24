@@ -1,11 +1,16 @@
 # Mise en place de la CI : Jenkins + SonarQube + Nexus
 
-Le pipeline exécute les étapes suivantes :
+```
+GitHub (main) ──poll 5 min──► Jenkins (WSL, :8081)
+   Checkout → Build (mvn clean package → backend/target/*.jar) → Tests (mvn test + JaCoCo)
+   → SonarQube (:9000) → Quality Gate → Nexus (:8082, version 1.0.<BUILD_NUMBER>)
+```
 
-```
-Checkout → Build (mvn clean package → backend/target/*.jar) → Tests (mvn test + JaCoCo)
-         → SonarQube (mvn sonar:sonar) → Quality Gate → Nexus (mvn deploy, version 1.0.<BUILD_NUMBER>)
-```
+| Outil | Où il tourne | URL |
+|---|---|---|
+| Jenkins | Ubuntu (WSL), installé avec apt | http://localhost:8081 |
+| SonarQube | Docker (`ci/docker-compose.yml`) | http://localhost:9000 |
+| Nexus | Docker (`ci/docker-compose.yml`) | http://localhost:8082 |
 
 ## 0. Vérifier en local (sans Jenkins)
 
@@ -13,74 +18,101 @@ Checkout → Build (mvn clean package → backend/target/*.jar) → Tests (mvn t
 cd backend
 ./mvnw clean package -DskipTests   # → target/backend-1.0.0-SNAPSHOT.jar
 ./mvnw test                        # → 25 tests, base H2 en mémoire (pas de MySQL)
-                                   # → rapport de couverture : target/site/jacoco/index.html
 ```
 
-## 1. Démarrer les outils
+## 1. Démarrer SonarQube et Nexus
 
-Docker Desktop doit être lancé.
+Lancer Docker Desktop, puis :
 
 ```bash
 cd ci
-docker compose up -d --build
+docker compose up -d
 ```
 
-| Outil | URL navigateur | URL entre conteneurs |
-|---|---|---|
-| Jenkins | http://localhost:8088 | http://jenkins:8080 |
-| SonarQube | http://localhost:9000 | http://sonarqube:9000 |
-| Nexus | http://localhost:8081 | http://nexus:8081 |
+Attendre 1 à 2 minutes.
 
-SonarQube et Nexus mettent 1 à 2 minutes à démarrer.
+## 2. Nexus (http://localhost:8082)
 
-## 2. Nexus
+1. Mot de passe admin initial : `docker exec nexus cat /nexus-data/admin.password`
+2. Se connecter en `admin` et choisir un nouveau mot de passe.
+3. Les dépôts `maven-releases` et `maven-snapshots` existent déjà.
 
-1. Récupérer le mot de passe admin initial :
-   `docker exec nexus cat /nexus-data/admin.password`
-2. Se connecter sur http://localhost:8081 (`admin`), choisir un nouveau mot de passe.
-3. Les dépôts `maven-releases` et `maven-snapshots` existent déjà par défaut : rien à créer.
+## 3. SonarQube (http://localhost:9000)
 
-## 3. SonarQube
-
-1. Se connecter sur http://localhost:9000 (`admin` / `admin`), changer le mot de passe.
-2. **My Account → Security → Generate Token** (type *Global Analysis Token*) et copier le token.
+1. Se connecter (`admin` / `admin`) et changer le mot de passe.
+2. **My Account → Security → Generate Token** (*Global Analysis Token*) : copier le token.
 3. **Administration → Configuration → Webhooks → Create**
    - Name : `jenkins`
-   - URL : `http://jenkins:8080/sonarqube-webhook/`
+   - URL : `http://host.docker.internal:8081/sonarqube-webhook/`
 
-   Sans ce webhook, l'étape *Quality Gate* attend jusqu'au timeout.
+## 4. Jenkins : plugins
 
-## 4. Jenkins
+**Manage Jenkins → Plugins → Available plugins**, installer :
 
-1. Mot de passe initial : `docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword`
-2. Ouvrir http://localhost:8088, installer les plugins suggérés et créer l'utilisateur admin.
-   (Les plugins du pipeline sont déjà installés par `ci/jenkins/plugins.txt`.)
-3. **Manage Jenkins → Credentials → System → Global → Add Credentials**
+- `Pipeline` (workflow-aggregator)
+- `Git`
+- `Pipeline: Stage View`
+- `SonarQube Scanner`
+- `JUnit`
+- `Credentials Binding`
+- `Timestamper`
+
+Cocher *Restart Jenkins when installation is complete*.
+
+## 5. Jenkins : credentials et SonarQube
+
+1. **Manage Jenkins → Credentials → System → Global credentials → Add Credentials**
    - *Secret text* : Secret = token SonarQube, ID = `sonar-token`
    - *Username with password* : `admin` / mot de passe Nexus, ID = `nexus-credentials`
-4. **Manage Jenkins → System → SonarQube servers → Add SonarQube**
-   - Name : `SonarQube` (doit être identique à `SONAR_SERVER` dans le Jenkinsfile)
-   - Server URL : `http://sonarqube:9000`
+2. **Manage Jenkins → System → SonarQube servers → Add SonarQube**
+   - Name : `SonarQube` (identique à `SONAR_SERVER` dans le Jenkinsfile)
+   - Server URL : `http://localhost:9000`
    - Server authentication token : `sonar-token`
-5. **New Item → Pipeline**
-   - *Pipeline script from SCM* → Git → URL du dépôt GitHub → branche `*/main`
+   - **Save**
+
+## 6. Connecter GitHub à Jenkins (job Pipeline)
+
+Le job `devops_khaled` existant est un projet *Freestyle* vide : il ne peut pas lire un Jenkinsfile.
+Le supprimer (**devops_khaled → Delete Project**), puis :
+
+1. **New Item** → nom `devops_khaled` → **Pipeline** → OK
+2. Section **Pipeline** :
+   - Definition : **Pipeline script from SCM**
+   - SCM : **Git**
+   - Repository URL : `https://github.com/KhaledBakhtriIA/devops_khaled.git`
+   - Credentials : *none* si le dépôt est public (sinon : Username = compte GitHub, Password = token GitHub)
+   - Branch Specifier : `*/main`
    - Script Path : `Jenkinsfile`
-6. **Build Now**.
+3. **Save** → **Build Now**
 
-## 5. Résultat attendu
+Après le premier build, Jenkins vérifie GitHub toutes les ~5 minutes (`pollSCM` dans le Jenkinsfile)
+et relance le pipeline à chaque nouveau `git push`.
 
-- Jenkins : toutes les étapes en vert, onglet *Test Result* (25 tests), le `.jar` dans *Artifacts*.
-- SonarQube : projet `AppGestionDesProjets - backend` avec bugs, code smells, couverture et Quality Gate *Passed*.
+## 7. Résultat attendu
+
+- Jenkins : 6 étapes vertes, onglet *Test Result* (25 tests), le `.jar` dans *Artifacts*.
+- SonarQube : projet `AppGestionDesProjets - backend` avec Quality Gate *Passed*.
 - Nexus : **Browse → maven-releases → tn/esprit/backend/1.0.<N>/backend-1.0.<N>.jar**.
 
-## Fichiers concernés
+## Dépannage
 
-| Fichier | Rôle |
-|---|---|
-| `Jenkinsfile` | Définition du pipeline |
-| `backend/pom.xml` | Version `${revision}`, JaCoCo, Sonar, `distributionManagement` Nexus |
-| `backend/src/test/resources/application.properties` | Base H2 pour les tests |
-| `backend/src/test/java/...` | Tests unitaires (services + contrôleur) |
-| `ci/maven-settings.xml` | Identifiants Nexus (lus depuis les variables d'environnement) |
-| `ci/docker-compose.yml` | Jenkins + SonarQube + Nexus |
-| `ci/jenkins/Dockerfile`, `plugins.txt` | Image Jenkins JDK 17 avec les plugins |
+**Jenkins n'arrive pas à joindre SonarQube ou Nexus** (`Connection refused` sur `localhost:9000` / `localhost:8082`).
+WSL et Windows n'ont pas le même `localhost` en mode réseau NAT. Tester depuis Ubuntu :
+
+```bash
+curl -I http://localhost:9000
+curl -I http://localhost:8082
+```
+
+Si ça échoue, activer le mode réseau *mirrored* (localhost partagé entre Windows et WSL) :
+créer `C:\Users\<vous>\.wslconfig` avec
+
+```ini
+[wsl2]
+networkingMode=mirrored
+```
+
+puis `wsl --shutdown` dans PowerShell et relancer Ubuntu et Jenkins.
+
+**L'étape Quality Gate attend 5 minutes puis échoue** : le webhook SonarQube → Jenkins (étape 3.3) n'arrive pas.
+Vérifier dans SonarQube **Administration → Webhooks → (dernier envoi)**.

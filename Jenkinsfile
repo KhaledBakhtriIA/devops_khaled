@@ -9,6 +9,13 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '10'))
     }
 
+    // Lien Git -> Jenkins : Jenkins vérifie GitHub toutes les ~5 min
+    // et lance un build automatiquement s'il y a un nouveau commit.
+    // (Un webhook GitHub ne peut pas joindre un Jenkins en localhost.)
+    triggers {
+        pollSCM('H/5 * * * *')
+    }
+
     environment {
         // Versionning du livrable : 1.0.1, 1.0.2, ... (un numéro par build Jenkins)
         VERSION_BASE = '1.0'
@@ -17,8 +24,8 @@ pipeline {
         // Nom du serveur déclaré dans  Manage Jenkins > System > SonarQube servers
         SONAR_SERVER = 'SonarQube'
 
-        // URL de Nexus vue depuis le conteneur Jenkins (même réseau Docker)
-        NEXUS_URL = 'http://nexus:8081'
+        // URL de Nexus vue depuis Jenkins (Jenkins dans WSL, Nexus dans Docker sur le port 8082)
+        NEXUS_URL = 'http://localhost:8082'
     }
 
     stages {
