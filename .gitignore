@@ -1,0 +1,11 @@
+# Build outputs
+target/
+node_modules/
+dist/
+.angular/
+.flattened-pom.xml
+
+# IDE
+.vscode/
+.idea/
+*.iml
