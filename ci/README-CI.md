@@ -22,18 +22,25 @@ cd backend
 
 ## 1. Démarrer SonarQube et Nexus
 
-Lancer Docker Desktop, puis :
+Avec Docker installé dans Ubuntu (WSL), depuis un terminal Ubuntu :
 
 ```bash
-cd ci
-docker compose up -d
+sudo docker start sonarqube || sudo docker run -d --name sonarqube -p 9000:9000 sonarqube:community
+sudo docker start nexus     || sudo docker run -d --name nexus -p 8082:8081 -v nexus_data:/nexus-data sonatype/nexus3
 ```
 
-Attendre 1 à 2 minutes.
+(Avec Docker Desktop + Compose, on peut à la place lancer `cd ci && docker compose up -d`.)
+
+Attendre 1 à 2 minutes, puis vérifier depuis Ubuntu :
+
+```bash
+curl -s http://localhost:9000/api/system/status   # → "status":"UP"
+curl -sI http://localhost:8082 | head -1           # → HTTP/1.1 200
+```
 
 ## 2. Nexus (http://localhost:8082)
 
-1. Mot de passe admin initial : `docker exec nexus cat /nexus-data/admin.password`
+1. Mot de passe admin initial : `sudo docker exec nexus cat /nexus-data/admin.password`
 2. Se connecter en `admin` et choisir un nouveau mot de passe.
 3. Les dépôts `maven-releases` et `maven-snapshots` existent déjà.
 
@@ -43,7 +50,11 @@ Attendre 1 à 2 minutes.
 2. **My Account → Security → Generate Token** (*Global Analysis Token*) : copier le token.
 3. **Administration → Configuration → Webhooks → Create**
    - Name : `jenkins`
-   - URL : `http://host.docker.internal:8081/sonarqube-webhook/`
+   - URL : `http://172.17.0.1:8081/sonarqube-webhook/`
+
+   `172.17.0.1` = la machine Ubuntu vue depuis un conteneur Docker (passerelle du réseau `bridge`).
+   `host.docker.internal` ne fonctionne **pas** avec Docker installé dans Ubuntu.
+   Vérifier l'adresse : `sudo docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}'`
 
 ## 4. Jenkins : plugins
 
@@ -113,6 +124,10 @@ networkingMode=mirrored
 ```
 
 puis `wsl --shutdown` dans PowerShell et relancer Ubuntu et Jenkins.
+
+**`SonarQube installation defined in this job (SonarQube) does not match any configured installation. Number of installations that can be configured: 0`**
+Le serveur SonarQube n'est pas déclaré dans Jenkins (le credential `sonar-token` seul ne suffit pas).
+Faire l'étape 5.2 : **Manage Jenkins → System → SonarQube servers → Add SonarQube**, Name = `SonarQube`.
 
 **L'étape Quality Gate attend 5 minutes puis échoue** : le webhook SonarQube → Jenkins (étape 3.3) n'arrive pas.
 Vérifier dans SonarQube **Administration → Webhooks → (dernier envoi)**.
